@@ -20,9 +20,9 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from PIL import Image
 
-TRAIN_CSV_PATH = '/shared_datasets/UTKFace/utkface_train.csv'
-TEST_CSV_PATH = '/shared_datasets/UTKFace/utkface_test.csv'
-IMAGE_PATH = '/shared_datasets/UTKFace/jpg'
+TRAIN_CSV_PATH = 'utkimagetrain.csv'
+TEST_CSV_PATH = 'utkimagetest.csv'
+IMAGE_PATH = 'utk/part4'
 
 
 # Argparse helper
