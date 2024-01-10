@@ -20,86 +20,6 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from PIL import Image
 
-TRAIN_CSV_PATH = 'utkimagetrain.csv'
-TEST_CSV_PATH = 'utkimagetest.csv'
-IMAGE_PATH = 'utk/part4'
-
-
-# Argparse helper
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--cuda',
-                    type=int,
-                    default=-1)
-
-parser.add_argument('--seed',
-                    type=int,
-                    default=-1)
-
-parser.add_argument('--outpath',
-                    type=str,
-                    required=True)
-
-parser.add_argument('--imp_weight',
-                    type=int,
-                    default=0)
-
-args = parser.parse_args()
-
-if args.cuda >= 0:
-    DEVICE = torch.device("cuda:%d" % args.cuda)
-else:
-    DEVICE = torch.device("cpu")
-
-if args.seed == -1:
-    RANDOM_SEED = None
-else:
-    RANDOM_SEED = args.seed
-
-IMP_WEIGHT = args.imp_weight
-
-PATH = args.outpath
-if not os.path.exists(PATH):
-    os.mkdir(PATH)
-LOGFILE = os.path.join(PATH, 'training.log')
-
-# Logging
-
-header = []
-
-header.append('PyTorch Version: %s' % torch.__version__)
-header.append('CUDA device available: %s' % torch.cuda.is_available())
-header.append('Using CUDA device: %s' % DEVICE)
-header.append('Random Seed: %s' % RANDOM_SEED)
-header.append('Task Importance Weight: %s' % IMP_WEIGHT)
-header.append('Output Path: %s' % PATH)
-
-with open(LOGFILE, 'w') as f:
-    for entry in header:
-        print(entry)
-        f.write('%s\n' % entry)
-        f.flush()
-
-
-##########################
-# SETTINGS
-##########################
-
-# Hyperparameters
-learning_rate = 0.0005
-num_epochs = 200
-
-# Architecture
-NUM_CLASSES = 40
-BATCH_SIZE = 256
-GRAYSCALE = False
-
-df = pd.read_csv(TRAIN_CSV_PATH, index_col=0)
-ages = df['age'].values
-del df
-ages = torch.tensor(ages, dtype=torch.float)
-
-
 def task_importance_weights(label_array):
     uniq = torch.unique(label_array)
     num_examples = label_array.size(0)
@@ -109,22 +29,11 @@ def task_importance_weights(label_array):
     for i, t in enumerate(torch.arange(torch.min(uniq), torch.max(uniq))):
         m_k = torch.max(torch.tensor([label_array[label_array > t].size(0), 
                                       num_examples - label_array[label_array > t].size(0)]))
+        print(m_k.float().shape)
         m[i] = torch.sqrt(m_k.float())
 
     imp = m/torch.max(m)
     return imp
-
-
-# Data-specific scheme
-if not IMP_WEIGHT:
-    imp = torch.ones(NUM_CLASSES-1, dtype=torch.float)
-elif IMP_WEIGHT == 1:
-    imp = task_importance_weights(ages)
-    imp = imp[0:NUM_CLASSES-1]
-else:
-    raise ValueError('Incorrect importance weight parameter.')
-imp = imp.to(DEVICE)
-
 
 ###################
 # Dataset
@@ -159,36 +68,6 @@ class UTKFaceDataset(Dataset):
 
     def __len__(self):
         return self.y.shape[0]
-
-
-custom_transform = transforms.Compose([transforms.Resize((128, 128)),
-                                       transforms.RandomCrop((120, 120)),
-                                       transforms.ToTensor()])
-
-train_dataset = UTKFaceDataset(csv_path=TRAIN_CSV_PATH,
-                               img_dir=IMAGE_PATH,
-                               transform=custom_transform)
-
-
-custom_transform2 = transforms.Compose([transforms.Resize((128, 128)),
-                                       transforms.CenterCrop((120, 120)),
-                                       transforms.ToTensor()])
-
-test_dataset = UTKFaceDataset(csv_path=TEST_CSV_PATH,
-                              img_dir=IMAGE_PATH,
-                              transform=custom_transform2)
-
-
-train_loader = DataLoader(dataset=train_dataset,
-                          batch_size=BATCH_SIZE,
-                          shuffle=True,
-                          num_workers=4)
-
-test_loader = DataLoader(dataset=test_dataset,
-                         batch_size=BATCH_SIZE,
-                         shuffle=False,
-                         num_workers=4)
-
 
 ##########################
 # MODEL
@@ -231,7 +110,6 @@ class BasicBlock(nn.Module):
         out = self.relu(out)
 
         return out
-
 
 class ResNet(nn.Module):
 
@@ -299,7 +177,6 @@ class ResNet(nn.Module):
         probas = torch.sigmoid(logits)
         return logits, probas
 
-
 def resnet34(num_classes, grayscale):
     """Constructs a ResNet-34 model."""
     model = ResNet(block=BasicBlock,
@@ -307,7 +184,6 @@ def resnet34(num_classes, grayscale):
                    num_classes=num_classes,
                    grayscale=grayscale)
     return model
-
 
 ###########################################
 # Initialize Cost, Model, and Optimizer
@@ -318,15 +194,6 @@ def cost_fn(logits, levels, imp):
                       + (F.logsigmoid(logits) - logits)*(1-levels))*imp,
            dim=1))
     return torch.mean(val)
-
-
-torch.manual_seed(RANDOM_SEED)
-torch.cuda.manual_seed(RANDOM_SEED)
-model = resnet34(NUM_CLASSES, GRAYSCALE)
-
-model.to(DEVICE)
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate) 
-
 
 def compute_mae_and_mse(model, data_loader, device):
     mae, mse, num_examples = 0, 0, 0
@@ -344,61 +211,173 @@ def compute_mae_and_mse(model, data_loader, device):
     mae = mae.float() / num_examples
     mse = mse.float() / num_examples
     return mae, mse
+TRAIN_CSV_PATH = 'C:/Users/jeong/Desktop/code/utkimagetrain.csv'
+TEST_CSV_PATH = 'C:/Users/jeong/Desktop/code/utkimagetest.csv'
+IMAGE_PATH = 'utk/part4'
 
 
-start_time = time.time()
-for epoch in range(num_epochs):
+cuda=0
+seed=1
+IMP_WEIGHT=0
+ # Hyperparameters
+learning_rate = 0.0005
+num_epochs = 200
 
-    model.train()
-    for batch_idx, (features, targets, levels) in enumerate(train_loader):
+# Architecture
+NUM_CLASSES = 40
+BATCH_SIZE = 256
+GRAYSCALE = False
 
-        features = features.to(DEVICE)
-        targets = targets
-        targets = targets.to(DEVICE)
-        levels = levels.to(DEVICE)
+def run():
+    
 
-        # FORWARD AND BACK PROP
-        logits, probas = model(features)
-        cost = cost_fn(logits, levels, imp)
-        optimizer.zero_grad()
+    outpath = 'utkmodel'
+    if cuda >= 0:
+        DEVICE = torch.device("cuda:%d" % cuda)
+    else:
+        DEVICE = torch.device("cpu")
 
-        cost.backward()
+    if seed == -1:
+        RANDOM_SEED = None
+    else:
+        RANDOM_SEED = seed
 
-        # UPDATE MODEL PARAMETERS
-        optimizer.step()
+    PATH = outpath
+    if not os.path.exists(PATH):
+        os.mkdir(PATH)
+    LOGFILE = os.path.join(PATH, 'training.log')
 
-        # LOGGING
-        if not batch_idx % 50:
-            s = ('Epoch: %03d/%03d | Batch %04d/%04d | Cost: %.4f'
-                 % (epoch+1, num_epochs, batch_idx,
-                     len(train_dataset)//BATCH_SIZE, cost))
-            print(s)
-            with open(LOGFILE, 'a') as f:
-                f.write('%s\n' % s)
+    # Logging
 
-    s = 'Time elapsed: %.2f min' % ((time.time() - start_time)/60)
-    print(s)
-    with open(LOGFILE, 'a') as f:
-        f.write('%s\n' % s)
+    header = []
 
-model.eval()
-with torch.set_grad_enabled(False):  # save memory during inference
+    header.append('PyTorch Version: %s' % torch.__version__)
+    header.append('CUDA device available: %s' % torch.cuda.is_available())
+    header.append('Using CUDA device: %s' % DEVICE)
+    header.append('Random Seed: %s' % RANDOM_SEED)
+    header.append('Task Importance Weight: %s' % IMP_WEIGHT)
+    header.append('Output Path: %s' % PATH)
 
-    train_mae, train_mse = compute_mae_and_mse(model, train_loader,
+    with open(LOGFILE, 'w') as f:
+        for entry in header:
+            print(entry)
+            f.write('%s\n' % entry)
+            f.flush()
+
+
+    ##########################
+    # SETTINGS
+    ##########################
+
+   
+
+    df = pd.read_csv(TRAIN_CSV_PATH, index_col=0)
+    ages = df['age'].values
+    del df
+    ages = torch.tensor(ages, dtype=torch.float)
+
+    # Data-specific scheme
+    if IMP_WEIGHT == 0:
+        imp = torch.ones(NUM_CLASSES-1, dtype=torch.float)
+    elif IMP_WEIGHT == 1:
+        imp = task_importance_weights(ages)
+        imp = imp[0:NUM_CLASSES-1]
+    else:
+        raise ValueError('Incorrect importance weight parameter.')
+    imp = imp.to(DEVICE)
+
+
+    custom_transform = transforms.Compose([transforms.Resize((128, 128)),
+                                            transforms.RandomCrop((120, 120)),
+                                            transforms.ToTensor()])
+
+    train_dataset = UTKFaceDataset(csv_path=TRAIN_CSV_PATH,
+                                    img_dir=IMAGE_PATH,
+                                    transform=custom_transform)
+
+
+    custom_transform2 = transforms.Compose([transforms.Resize((128, 128)),
+                                            transforms.CenterCrop((120, 120)),
+                                            transforms.ToTensor()])
+
+    test_dataset = UTKFaceDataset(csv_path=TEST_CSV_PATH,
+                                    img_dir=IMAGE_PATH,
+                                    transform=custom_transform2)
+
+
+    train_loader = DataLoader(dataset=train_dataset,
+                                batch_size=BATCH_SIZE,
+                                shuffle=True,
+                                num_workers=4)
+
+    test_loader = DataLoader(dataset=test_dataset,
+                                batch_size=BATCH_SIZE,
+                                shuffle=False,
+                                num_workers=4)
+
+    torch.manual_seed(RANDOM_SEED)
+    torch.cuda.manual_seed(RANDOM_SEED)
+    model = resnet34(NUM_CLASSES, GRAYSCALE)
+
+    model.to(DEVICE)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    start_time = time.time()
+    for epoch in range(num_epochs):
+
+        model.train()
+        for batch_idx, (features, targets, levels) in enumerate(train_loader):
+
+            features = features.to(DEVICE)
+            targets = targets
+            targets = targets.to(DEVICE)
+            levels = levels.to(DEVICE)
+
+            # FORWARD AND BACK PROP
+            logits, probas = model(features)
+            cost = cost_fn(logits, levels, imp)
+            optimizer.zero_grad()
+
+            cost.backward()
+
+            # UPDATE MODEL PARAMETERS
+            optimizer.step()
+
+            # LOGGING
+            if not batch_idx % 50:
+                s = ('Epoch: %03d/%03d | Batch %04d/%04d | Cost: %.4f'
+                    % (epoch+1, num_epochs, batch_idx,
+                        len(train_dataset)//BATCH_SIZE, cost))
+                print(s)
+                with open(LOGFILE, 'a') as f:
+                    f.write('%s\n' % s)
+
+        s = 'Time elapsed: %.2f min' % ((time.time() - start_time)/60)
+        print(s)
+        with open(LOGFILE, 'a') as f:
+            f.write('%s\n' % s)
+
+    model.eval()
+    with torch.set_grad_enabled(False):  # save memory during inference
+
+        train_mae, train_mse = compute_mae_and_mse(model, train_loader,
                                                device=DEVICE)
-    test_mae, test_mse = compute_mae_and_mse(model, test_loader,
+        test_mae, test_mse = compute_mae_and_mse(model, test_loader,
                                              device=DEVICE)
 
-    s = 'MAE/RMSE: | Train: %.2f/%.2f | Test: %.2f/%.2f' % (
-        train_mae, torch.sqrt(train_mse), test_mae, torch.sqrt(test_mse))
+        s = 'MAE/RMSE: | Train: %.2f/%.2f | Test: %.2f/%.2f' % (
+            train_mae, torch.sqrt(train_mse), test_mae, torch.sqrt(test_mse))
+        print(s)
+        with open(LOGFILE, 'a') as f:
+            f.write('%s\n' % s)
+
+    s = 'Total Training Time: %.2f min' % ((time.time() - start_time)/60)
     print(s)
     with open(LOGFILE, 'a') as f:
         f.write('%s\n' % s)
 
-s = 'Total Training Time: %.2f min' % ((time.time() - start_time)/60)
-print(s)
-with open(LOGFILE, 'a') as f:
-    f.write('%s\n' % s)
+    model = model.to(torch.device('cpu'))
+    torch.save(model.state_dict(), os.path.join(PATH, 'model.pt'))
 
-model = model.to(torch.device('cpu'))
-torch.save(model.state_dict(), os.path.join(PATH, 'model.pt'))
+if __name__ == '__main__':
+    run()
