@@ -16,20 +16,22 @@ import argparse
 
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
+from torchvision.io import read_image
 
 from torchvision import transforms
 from PIL import Image
 
 def task_importance_weights(label_array):
+    print(label_array)
     uniq = torch.unique(label_array)
+    print(uniq)
     num_examples = label_array.size(0)
-
     m = torch.zeros(uniq.shape[0])
 
     for i, t in enumerate(torch.arange(torch.min(uniq), torch.max(uniq))):
+
         m_k = torch.max(torch.tensor([label_array[label_array > t].size(0), 
                                       num_examples - label_array[label_array > t].size(0)]))
-        print(m_k.float().shape)
         m[i] = torch.sqrt(m_k.float())
 
     imp = m/torch.max(m)
@@ -44,22 +46,19 @@ class UTKFaceDataset(Dataset):
     """Custom Dataset for loading UTKFace face images"""
 
     def __init__(self,
-                 csv_path, img_dir, transform=None):
+                 csv_path, img_dir, transform):
 
         df = pd.read_csv(csv_path, index_col=0)
         self.img_dir = img_dir
         self.csv_path = csv_path
-        self.img_names = df['file'].values
+        self.img_names = df['file_name'].values
         self.y = df['age'].values
         self.transform = transform
 
     def __getitem__(self, index):
-        img = Image.open(os.path.join(self.img_dir,
+        img = read_image(os.path.join(self.img_dir,
                                       self.img_names[index]))
-
-        if self.transform is not None:
-            img = self.transform(img)
-
+        img = self.transform(img)
         label = self.y[index]
         levels = [1]*label + [0]*(NUM_CLASSES - 1 - label)
         levels = torch.tensor(levels, dtype=torch.float32)
@@ -116,10 +115,7 @@ class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes, grayscale):
         self.num_classes = num_classes
         self.inplanes = 64
-        if grayscale:
-            in_dim = 1
-        else:
-            in_dim = 3
+        in_dim = 1
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(in_dim, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
@@ -275,7 +271,6 @@ def run():
     ages = df['age'].values
     del df
     ages = torch.tensor(ages, dtype=torch.float)
-
     # Data-specific scheme
     if IMP_WEIGHT == 0:
         imp = torch.ones(NUM_CLASSES-1, dtype=torch.float)
@@ -288,32 +283,25 @@ def run():
 
 
     custom_transform = transforms.Compose([transforms.Resize((128, 128)),
-                                            transforms.RandomCrop((120, 120)),
-                                            transforms.ToTensor()])
+                                            transforms.RandomCrop((120, 120))])
 
     train_dataset = UTKFaceDataset(csv_path=TRAIN_CSV_PATH,
                                     img_dir=IMAGE_PATH,
                                     transform=custom_transform)
 
-
-    custom_transform2 = transforms.Compose([transforms.Resize((128, 128)),
-                                            transforms.CenterCrop((120, 120)),
-                                            transforms.ToTensor()])
-
     test_dataset = UTKFaceDataset(csv_path=TEST_CSV_PATH,
                                     img_dir=IMAGE_PATH,
-                                    transform=custom_transform2)
-
+                                    transform=custom_transform)
 
     train_loader = DataLoader(dataset=train_dataset,
                                 batch_size=BATCH_SIZE,
                                 shuffle=True,
-                                num_workers=4)
+                                num_workers=1)
 
     test_loader = DataLoader(dataset=test_dataset,
                                 batch_size=BATCH_SIZE,
                                 shuffle=False,
-                                num_workers=4)
+                                num_workers=1)
 
     torch.manual_seed(RANDOM_SEED)
     torch.cuda.manual_seed(RANDOM_SEED)
@@ -327,7 +315,6 @@ def run():
 
         model.train()
         for batch_idx, (features, targets, levels) in enumerate(train_loader):
-
             features = features.to(DEVICE)
             targets = targets
             targets = targets.to(DEVICE)
