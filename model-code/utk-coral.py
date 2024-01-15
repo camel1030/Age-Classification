@@ -13,26 +13,28 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import argparse
-
+import numpy as np
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from torchvision.io import read_image
-
-from torchvision import transforms
+from torchvision.io import read_image, decode_image
 from PIL import Image
+from torchvision import transforms
+import PIL
+import cv2
 
 def task_importance_weights(label_array):
-    print(label_array)
     uniq = torch.unique(label_array)
-    print(uniq)
-    num_examples = label_array.size(0)
+    #print(uniq)       #shape: 104
+    num_examples = label_array.size(0)  #22900
     m = torch.zeros(uniq.shape[0])
-
-    for i, t in enumerate(torch.arange(torch.min(uniq), torch.max(uniq))):
-
+    #print(torch.max(uniq))       #104
+    for i, t in enumerate(uniq):  #나이 최소~최대 순서로
+        #print(t)# tensor 115
+        #print(label_array[label_array > t].size(0))
+        #print(num_examples - label_array[label_array > t].size(0))
         m_k = torch.max(torch.tensor([label_array[label_array > t].size(0), 
-                                      num_examples - label_array[label_array > t].size(0)]))
-        m[i] = torch.sqrt(m_k.float())
+                                      num_examples - label_array[label_array > t].size(0)]))    #115
+        m[i] = torch.sqrt(m_k.float())  #m은 104인데 m_k는 115
 
     imp = m/torch.max(m)
     return imp
@@ -56,8 +58,9 @@ class UTKFaceDataset(Dataset):
         self.transform = transform
 
     def __getitem__(self, index):
-        img = read_image(os.path.join(self.img_dir,
-                                      self.img_names[index]))
+        img_path = os.path.join(self.img_dir, self.img_names[index])
+        img = Image.open(img_path).convert("RGB")
+        img = transforms.Resize((256,256))(img)
         img = self.transform(img)
         label = self.y[index]
         levels = [1]*label + [0]*(NUM_CLASSES - 1 - label)
@@ -115,7 +118,10 @@ class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes, grayscale):
         self.num_classes = num_classes
         self.inplanes = 64
-        in_dim = 1
+        if grayscale:
+            in_dim = 1
+        else:
+            in_dim = 3
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(in_dim, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
@@ -186,9 +192,10 @@ def resnet34(num_classes, grayscale):
 ###########################################
 
 def cost_fn(logits, levels, imp):
-    val = (-torch.sum((F.logsigmoid(logits)*levels
-                      + (F.logsigmoid(logits) - logits)*(1-levels))*imp,
-           dim=1))
+    #print(logits.shape)
+    #print(levels.shape)
+    a = F.logsigmoid(logits)*levels
+    val = (-torch.sum((a + (F.logsigmoid(logits) - logits)*(1-levels))*imp, dim=1))
     return torch.mean(val)
 
 def compute_mae_and_mse(model, data_loader, device):
@@ -209,20 +216,27 @@ def compute_mae_and_mse(model, data_loader, device):
     return mae, mse
 TRAIN_CSV_PATH = 'C:/Users/jeong/Desktop/code/utkimagetrain.csv'
 TEST_CSV_PATH = 'C:/Users/jeong/Desktop/code/utkimagetest.csv'
-IMAGE_PATH = 'utk/part4'
+IMAGE_PATH = 'utk/part4/'
 
 
 cuda=0
 seed=1
-IMP_WEIGHT=0
+IMP_WEIGHT=1
  # Hyperparameters
 learning_rate = 0.0005
-num_epochs = 200
+num_epochs = 1
 
 # Architecture
 NUM_CLASSES = 40
 BATCH_SIZE = 256
 GRAYSCALE = False
+class PrintTransform:
+    def __call__(self, x):
+        if isinstance(x, PIL.Image.Image):
+            print(x.size)
+        elif isinstance(x, torch.Tensor) or isinstance(x, np.ndarray):
+            print(x.shape)
+        return x
 
 def run():
     
@@ -282,22 +296,40 @@ def run():
     imp = imp.to(DEVICE)
 
 
-    custom_transform = transforms.Compose([transforms.Resize((128, 128)),
-                                            transforms.RandomCrop((120, 120))])
+    custom_transform = transforms.Compose([transforms.ToTensor(),
+                                            transforms.RandomCrop((120, 120))]) #PrintTransform()
 
     train_dataset = UTKFaceDataset(csv_path=TRAIN_CSV_PATH,
                                     img_dir=IMAGE_PATH,
                                     transform=custom_transform)
-
+    
     test_dataset = UTKFaceDataset(csv_path=TEST_CSV_PATH,
                                     img_dir=IMAGE_PATH,
                                     transform=custom_transform)
-
+    from torch.nn.utils.rnn import pad_sequence
+    
+    def my_collate(batch):      #tensor 사이즈 맞추기 위해서 추가 but error....
+        Image = torch.stack([item[0] for item in batch])
+        label = [item[1] for item in batch]
+        label = torch.LongTensor(label)
+        bi = []
+        min_len = min([len(item[2]) for item in batch])
+        #print(max_len)
+        for _x in [item[2] for item in batch]:
+            tensor_len = _x.size(dim=0) # 텐서 길이
+            p2d = (0, min_len - tensor_len)
+            # right 에만 max_len - tensor_len 만큼 0으로 채워줄 것이다.
+            _x = F.pad(_x, p2d)
+            bi.append(_x)
+        bi = torch.stack(bi)
+        #print(bi.shape)
+        return Image, label, bi
+    
     train_loader = DataLoader(dataset=train_dataset,
                                 batch_size=BATCH_SIZE,
                                 shuffle=True,
-                                num_workers=1)
-
+                                num_workers=0,collate_fn=my_collate)
+                                
     test_loader = DataLoader(dataset=test_dataset,
                                 batch_size=BATCH_SIZE,
                                 shuffle=False,
@@ -315,13 +347,15 @@ def run():
 
         model.train()
         for batch_idx, (features, targets, levels) in enumerate(train_loader):
-            features = features.to(DEVICE)
+            features = features.to(DEVICE)  #image
+            #print(features)
             targets = targets
-            targets = targets.to(DEVICE)
-            levels = levels.to(DEVICE)
-
+            targets = targets.to(DEVICE)    #나이
+            levels = levels.to(DEVICE)      #binary 90
+            #print(levels) #bi
             # FORWARD AND BACK PROP
-            logits, probas = model(features)
+            logits, probas = model(features)    #39
+            #print(logits.shape)
             cost = cost_fn(logits, levels, imp)
             optimizer.zero_grad()
 
@@ -329,12 +363,10 @@ def run():
 
             # UPDATE MODEL PARAMETERS
             optimizer.step()
-
+            print(batch_idx%50)
             # LOGGING
-            if not batch_idx % 50:
-                s = ('Epoch: %03d/%03d | Batch %04d/%04d | Cost: %.4f'
-                    % (epoch+1, num_epochs, batch_idx,
-                        len(train_dataset)//BATCH_SIZE, cost))
+            if not batch_idx % 10:
+                s = ('Epoch: %03d/%03d | Batch %04d/%04d | Cost: %.4f'% (epoch+1, num_epochs, batch_idx,len(train_dataset)//BATCH_SIZE, cost))
                 print(s)
                 with open(LOGFILE, 'a') as f:
                     f.write('%s\n' % s)
@@ -349,11 +381,11 @@ def run():
 
         train_mae, train_mse = compute_mae_and_mse(model, train_loader,
                                                device=DEVICE)
+        print(train_mae)
         test_mae, test_mse = compute_mae_and_mse(model, test_loader,
                                              device=DEVICE)
 
-        s = 'MAE/RMSE: | Train: %.2f/%.2f | Test: %.2f/%.2f' % (
-            train_mae, torch.sqrt(train_mse), test_mae, torch.sqrt(test_mse))
+        s = 'MAE/RMSE: | Train: %.2f/%.2f | Test: %.2f/%.2f' % (train_mae, torch.sqrt(train_mse), test_mae, torch.sqrt(test_mse))
         print(s)
         with open(LOGFILE, 'a') as f:
             f.write('%s\n' % s)
