@@ -224,7 +224,7 @@ seed=1
 IMP_WEIGHT=1
  # Hyperparameters
 learning_rate = 0.0005
-num_epochs = 1
+num_epochs = 256
 
 # Architecture
 NUM_CLASSES = 40
