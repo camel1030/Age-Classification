@@ -200,6 +200,7 @@ def cost_fn(logits, levels, imp):
 
 def compute_mae_and_mse(model, data_loader, device):
     mae, mse, num_examples = 0, 0, 0
+    print(data_loader.shape)
     for i, (features, targets, levels) in enumerate(data_loader):
 
         features = features.to(device)
@@ -213,18 +214,18 @@ def compute_mae_and_mse(model, data_loader, device):
         mse += torch.sum((predicted_labels - targets)**2)
     mae = mae.float() / num_examples
     mse = mse.float() / num_examples
-    return mae, mse
-TRAIN_CSV_PATH = 'C:/Users/jeong/Desktop/code/utkimagetrain.csv'
-TEST_CSV_PATH = 'C:/Users/jeong/Desktop/code/utkimagetest.csv'
-IMAGE_PATH = 'utk/part4/'
+    return features, targets
 
+TRAIN_CSV_PATH = 'C:/Users/jeong/Desktop/code/utk/part4/utkimagetrain.csv'
+TEST_CSV_PATH = 'C:/Users/jeong/Desktop/code/utk/part4/utkimagetest.csv'
+IMAGE_PATH = 'C:/Users/jeong/Desktop/code/utk/part4/'
 
 cuda=0
 seed=1
 IMP_WEIGHT=1
  # Hyperparameters
 learning_rate = 0.0005
-num_epochs = 256
+num_epochs = 1
 
 # Architecture
 NUM_CLASSES = 40
@@ -370,12 +371,15 @@ def run():
                 print(s)
                 with open(LOGFILE, 'a') as f:
                     f.write('%s\n' % s)
+        
 
         s = 'Time elapsed: %.2f min' % ((time.time() - start_time)/60)
         print(s)
         with open(LOGFILE, 'a') as f:
             f.write('%s\n' % s)
-
+    print('Learning finished')
+    
+    
     model.eval()
     with torch.set_grad_enabled(False):  # save memory during inference
 
