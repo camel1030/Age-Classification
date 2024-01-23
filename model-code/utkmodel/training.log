@@ -1,0 +1,6 @@
+PyTorch Version: 1.7.1+cu110
+CUDA DEVICE available: True
+Using CUDA DEVICE: cuda:0
+Random Seed: 1
+Task Importance Weight: 1
+Output Path: utkmodel
