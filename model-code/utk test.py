@@ -18,6 +18,7 @@ import cv2
 import resnet
 import torch.optim as optim
 from tqdm import tqdm
+import wandb
 
 class CustomImageDataset(Dataset):
     def __init__(self, csv_path, img_dir, transform):
@@ -48,21 +49,22 @@ seed = 1
 IMP_WEIGHT = 1
  # Hyperparameters
 learning_rate = 0.0005
-num_epochs = 60
+num_epochs = 2
 
 # Architecture
 NUM_CLASSES = 40
-BATCH_SIZE = 256
+BATCH_SIZE = 265
 GRAYSCALE = False
 
 TRAIN_CSV_PATH = 'C:/Users/jeong/Desktop/code/utk/part4/utkimagetrain.csv'
-TEST_CSV_PATH = 'C:/Users/jeong/Desktop/code/utk/part4/utkimagetest.csv'
-IMAGE_PATH = 'C:/Users/jeong/Desktop/code/utk/part4/'
+TEST_CSV_PATH = 'C:/Users/jeong/Desktop/code/utk/part4/utkimageval.csv'
+Train_IMAGE_PATH = 'C:/Users/jeong/Desktop/code/utk/train/'
+Val_IMAGE_PATH = 'C:/Users/jeong/Desktop/code/utk/val/'
 
 trans = transforms.Compose([transforms.Resize((120, 120)), transforms.ToTensor()])  #이미지 크기 고정
 target_transform = transforms.Compose([transforms.ToTensor()])
-training_data = CustomImageDataset(csv_path=TRAIN_CSV_PATH, img_dir=IMAGE_PATH, transform=trans)
-test_data = CustomImageDataset(csv_path=TEST_CSV_PATH, img_dir=IMAGE_PATH, transform=trans)
+training_data = CustomImageDataset(csv_path=TRAIN_CSV_PATH, img_dir=Train_IMAGE_PATH, transform=trans)
+test_data = CustomImageDataset(csv_path=TEST_CSV_PATH, img_dir=Val_IMAGE_PATH, transform=trans)
 
 outpath = 'utkmodel'
 if cuda >= 0:
@@ -113,6 +115,17 @@ model = resnet.resnet34(NUM_CLASSES, GRAYSCALE).to(DEVICE)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 loss_fn = nn.MSELoss().to(DEVICE)
+config = {
+        'model_name' : 'ResNet34',
+        'batch_size' : train_dataloader.batch_size,
+        'epoch' : num_epochs,
+        'criterion' : loss_fn,
+        'optimizer' : optimizer,
+    }
+### 새 wandb 세션 시작 ###
+wandb.init(reinit=True, project='test', config=config)
+### 모델 파라미터(그래디언트 등) 추적을 위한 .watch 호출 ###
+wandb.watch(model)
 start_time = time.time()
 
 for epoch in range(num_epochs):
@@ -137,23 +150,21 @@ for epoch in range(num_epochs):
         #     with open(LOGFILE, 'a') as f:
         #         f.write('%s\n' % s)
         loop.set_postfix(loss=loss.item())
-    s = 'Time elapsed: %.2f min' % ((time.time() - start_time) / 60)
-    print(s)
-    with open(LOGFILE, 'a') as f:
-        f.write('%s\n' % s)
-print('Learning finished')
-correct = 0
-total = 0
-model.eval()
-with torch.set_grad_enabled(False):  # save memory during inference
-    for data in enumerate(test_dataloader):
-        inputs, target = data[0].to(DEVICE), data[1].to(DEVICE)
-        outputs = model(inputs)
-        _, predicted = torch.max(outputs, 1)  # values, indics
+        wandb.log({'train_loss': loss})
+    model.eval()
+    with torch.set_grad_enabled(False):  # save memory during inference
+        for batch_idx, (features, targets) in enumerate(test_dataloader):
+            inputs, target = features.to(DEVICE), targets.to(DEVICE).unsqueeze(1).to(torch.float32)
+            outputs = model(inputs)
+            y = torch.max(outputs, 1)  # values, indics
+            loss = loss_fn(y, targets.to(torch.float32))
+            print(loss)
+torch.save(model.state_dict(), os.path.join(PATH, 'model.pt'))
+wandb.finish()
 
-        total += target.size(0)
-        correct += (predicted == target).sum().item()
-    print("test accuracy : {}%".format((100 * correct / total)))
+    #     total += target.size(0)
+    #     correct += (predicted == target).sum().item()
+    # print("test accuracy : {}%".format((100 * correct / total)))
 #
 #     print(train_mae)
 #     test_mae, test_mse = compute_mae_and_mse(model, test_loader, DEVICE=DEVICE)
